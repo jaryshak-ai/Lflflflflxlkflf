@@ -1,0 +1,2031 @@
+name: Build StatsMenu
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Generate project
+        run: |
+          mkdir -p statsmenu/src/main/java/ru/eclips/statsmenu
+          mkdir -p statsmenu/src/main/resources
+          cd statsmenu
+
+          cat > pom.xml <<'EOF_POM'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <project xmlns="http://maven.apache.org/POM/4.0.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>ru.eclips</groupId>
+            <artifactId>statsmenu</artifactId>
+            <version>1.0.0</version>
+            <packaging>jar</packaging>
+
+            <properties>
+              <maven.compiler.release>17</maven.compiler.release>
+              <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+              <nukkit.group>cn.nukkit</nukkit.group>
+              <nukkit.artifact>Nukkit</nukkit.artifact>
+              <nukkit.version>MOT-SNAPSHOT</nukkit.version>
+            </properties>
+
+            <repositories>
+              <repository>
+                <id>lanink</id>
+                <url>https://repo.lanink.cn/repository/maven-public/</url>
+                <releases><enabled>true</enabled></releases>
+                <snapshots><enabled>true</enabled></snapshots>
+              </repository>
+              <repository>
+                <id>opencollab-release</id>
+                <url>https://repo.opencollab.dev/maven-releases/</url>
+              </repository>
+              <repository>
+                <id>opencollab-snapshot</id>
+                <url>https://repo.opencollab.dev/maven-snapshots/</url>
+                <releases><enabled>false</enabled></releases>
+                <snapshots><enabled>true</enabled></snapshots>
+              </repository>
+              <repository>
+                <id>jitpack</id>
+                <url>https://jitpack.io</url>
+              </repository>
+            </repositories>
+
+            <dependencies>
+              <dependency>
+                <groupId>${nukkit.group}</groupId>
+                <artifactId>${nukkit.artifact}</artifactId>
+                <version>${nukkit.version}</version>
+                <scope>provided</scope>
+              </dependency>
+              <dependency>
+                <groupId>com.google.code.gson</groupId>
+                <artifactId>gson</artifactId>
+                <version>2.10.1</version>
+                <scope>provided</scope>
+              </dependency>
+            </dependencies>
+
+            <build>
+              <finalName>StatsMenu</finalName>
+              <plugins>
+                <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-compiler-plugin</artifactId>
+                  <version>3.11.0</version>
+                  <configuration>
+                    <release>17</release>
+                    <encoding>UTF-8</encoding>
+                  </configuration>
+                </plugin>
+              </plugins>
+            </build>
+          </project>
+          EOF_POM
+
+          cat > src/main/resources/plugin.yml <<'EOF_PLUGIN'
+          name: StatsMenu
+          main: ru.eclips.statsmenu.StatsPlugin
+          version: 1.0.0
+          api: ["1.0.0"]
+          author: Eclips
+          description: Статистика активности игроков (/ss)
+          commands:
+            ss:
+              description: Меню статистики игроков
+              usage: /ss
+              permission: ss.use
+          permissions:
+            ss.use:
+              description: Доступ к меню статистики /ss
+              default: op
+          EOF_PLUGIN
+
+          cat > src/main/resources/config.yml <<'EOF_CONFIG'
+          # ===== StatsMenu: настройки статистики =====
+
+          # Если игрок перезашёл в течение этого числа секунд после выхода
+          # (хаб, RedirectCMD, HubPortal, вылет), это считается ОДНОЙ сессией.
+          session-merge-seconds: 60
+
+          # Как часто (в секундах) сохранять статистику на диск.
+          # Сохранение выполняется асинхронно и не нагружает основной поток.
+          save-interval-seconds: 60
+
+          # "Вернулся 3+ раза": минимальное число сессий игрока (показатель №4).
+          returning-sessions: 3
+
+          # "Вернулся 20+ раз": минимальное число сессий игрока (показатель №5).
+          loyal-sessions: 20
+
+          # Игрок с одной сессией считается "не вернувшимся" только если
+          # прошло больше стольких часов с его выхода (показатель №3).
+          bounce-grace-hours: 24
+
+          # Сколько дней без захода считать, что игрок ушёл (показатель №9).
+          inactive-days: 7
+
+          # Сколько ников показывать на одной странице списка.
+          page-size: 10
+
+          # Ники, которых нужно НЕ учитывать в статистике (например, админы или тестовые аккаунты).
+          # Пример: exclude-names: ["Admin", "TestUser"]
+          exclude-names: []
+
+          # Часовой пояс для дат в меню, например "Europe/Moscow" или "Europe/Oslo".
+          # Пусто = часовой пояс сервера.
+          timezone: ""
+
+          # ===== Показатели по времени суток (онлайн, пик, прайм-тайм) =====
+
+          # Часовой пояс, по которому считаются сутки, окно онлайна и прайм-тайм.
+          msk-zone: "Europe/Moscow"
+
+          # Окно для показателя "Онлайн" (часы 0-24): 7 и 22 = с 07:00 до 22:00.
+          day-window-start-hour: 7
+          day-window-end-hour: 22
+
+          # Длина прайм-тайма в часах (целое число от 1 до 12).
+          prime-length-hours: 2
+
+          # Сколько процентов от пикового онлайна считать "держит онлайн" (50-100).
+          prime-peak-threshold-percent: 90
+          EOF_CONFIG
+
+          cat > src/main/java/ru/eclips/statsmenu/Fmt.java <<'EOF_FMT'
+          package ru.eclips.statsmenu;
+
+          import java.time.Instant;
+          import java.time.ZoneId;
+          import java.time.format.DateTimeFormatter;
+          import java.util.Locale;
+
+          public final class Fmt {
+
+              private static final DateTimeFormatter FULL = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
+              private static final DateTimeFormatter SHORT = DateTimeFormatter.ofPattern("dd.MM HH:mm");
+
+              private Fmt() {
+              }
+
+              public static String dur(long ms) {
+                  if (ms < 0) {
+                      ms = 0;
+                  }
+                  long h = ms / 3600000L;
+                  long m = (ms % 3600000L) / 60000L;
+                  long s = (ms % 60000L) / 1000L;
+                  if (h > 0) {
+                      return h + "ч " + m + "м";
+                  }
+                  if (m > 0) {
+                      return m + "м " + s + "с";
+                  }
+                  return s + "с";
+              }
+
+              public static String date(long t, ZoneId z) {
+                  return FULL.format(Instant.ofEpochMilli(t).atZone(z));
+              }
+
+              public static String dateS(long t, ZoneId z) {
+                  return SHORT.format(Instant.ofEpochMilli(t).atZone(z));
+              }
+
+              public static String pct(long a, long b) {
+                  if (b <= 0) {
+                      return "0.0%";
+                  }
+                  return String.format(Locale.ROOT, "%.1f%%", 100.0 * a / b);
+              }
+
+              public static String f1(double d) {
+                  return String.format(Locale.ROOT, "%.1f", d);
+              }
+
+              public static String f2(double d) {
+                  return String.format(Locale.ROOT, "%.2f", d);
+              }
+          }
+          EOF_FMT
+
+          cat > src/main/java/ru/eclips/statsmenu/Store.java <<'EOF_STORE'
+          package ru.eclips.statsmenu;
+
+          import com.google.gson.Gson;
+          import com.google.gson.GsonBuilder;
+
+          import java.io.File;
+          import java.io.FileInputStream;
+          import java.io.FileOutputStream;
+          import java.io.InputStreamReader;
+          import java.io.OutputStream;
+          import java.io.Reader;
+          import java.nio.charset.StandardCharsets;
+          import java.nio.file.Files;
+          import java.nio.file.StandardCopyOption;
+          import java.util.ArrayList;
+          import java.util.Collections;
+          import java.util.Comparator;
+          import java.util.HashMap;
+          import java.util.IdentityHashMap;
+          import java.util.List;
+          import java.util.Locale;
+          import java.util.Map;
+          import java.util.Objects;
+          import java.util.Set;
+          import java.util.function.Function;
+
+          public class Store {
+
+              public static class Session {
+                  public long s;
+                  public long e;
+              }
+
+              public static class Rec {
+                  public int id;
+                  public String name = "";
+                  public String xuid = "";
+                  public long first;
+                  public List<Session> ses = new ArrayList<>();
+              }
+
+              public static class Root {
+                  public int v = 1;
+                  public long startedAt;
+                  public int nextId = 1;
+                  public List<Rec> players = new ArrayList<>();
+              }
+
+              private static class Online {
+                  Rec rec;
+                  Session ses;
+              }
+
+              private final Object lock = new Object();
+              private final Object ioLock = new Object();
+              private final File file;
+              private final Gson gson = new GsonBuilder().create();
+
+              private final List<Rec> all = new ArrayList<>();
+              private final Map<Integer, Rec> byId = new HashMap<>();
+              private final Map<String, Rec> byName = new HashMap<>();
+              private final Map<String, Rec> byXuid = new HashMap<>();
+              private final Map<String, Online> online = new HashMap<>();
+
+              private long startedAt;
+              private int nextId = 1;
+              private long gapMs = 60000L;
+              private boolean dirty = false;
+
+              public Store(File file) {
+                  this.file = file;
+              }
+
+              public void setGapMs(long ms) {
+                  synchronized (lock) {
+                      gapMs = ms;
+                  }
+              }
+
+              public void load() {
+                  synchronized (lock) {
+                      Root root = null;
+                      boolean fromMain = false;
+                      File bak = new File(file.getPath() + ".bak");
+                      File[] candidates = new File[]{file, bak};
+                      for (File f : candidates) {
+                          if (!f.isFile()) {
+                              continue;
+                          }
+                          try (Reader r = new InputStreamReader(new FileInputStream(f), StandardCharsets.UTF_8)) {
+                              root = gson.fromJson(r, Root.class);
+                          } catch (Throwable t) {
+                              root = null;
+                          }
+                          if (root != null) {
+                              fromMain = (f == file);
+                              break;
+                          } else if (f == file) {
+                              try {
+                                  Files.copy(file.toPath(),
+                                          new File(file.getPath() + ".broken-" + System.currentTimeMillis()).toPath(),
+                                          StandardCopyOption.REPLACE_EXISTING);
+                              } catch (Throwable ignored) {
+                              }
+                          }
+                      }
+                      if (root == null) {
+                          root = new Root();
+                      }
+                      long now = System.currentTimeMillis();
+                      if (root.startedAt <= 0) {
+                          root.startedAt = now;
+                          dirty = true;
+                      }
+                      startedAt = root.startedAt;
+
+                      all.clear();
+                      byId.clear();
+                      byName.clear();
+                      byXuid.clear();
+
+                      int maxId = 0;
+                      if (root.players != null) {
+                          for (Rec r : root.players) {
+                              if (r != null && r.id > maxId) {
+                                  maxId = r.id;
+                              }
+                          }
+                      }
+                      int next = Math.max(Math.max(1, root.nextId), maxId + 1);
+
+                      if (root.players != null) {
+                          for (Rec r : root.players) {
+                              if (r == null) {
+                                  continue;
+                              }
+                              if (r.name == null) {
+                                  r.name = "";
+                              }
+                              if (r.xuid == null) {
+                                  r.xuid = "";
+                              }
+                              if (r.ses == null) {
+                                  r.ses = new ArrayList<>();
+                              }
+                              r.ses.removeIf(Objects::isNull);
+                              for (Session s : r.ses) {
+                                  if (s.e < s.s) {
+                                      s.e = s.s;
+                                  }
+                              }
+                              Collections.sort(r.ses, new Comparator<Session>() {
+                                  @Override
+                                  public int compare(Session a, Session b) {
+                                      return Long.compare(a.s, b.s);
+                                  }
+                              });
+                              if (r.first <= 0) {
+                                  r.first = r.ses.isEmpty() ? now : r.ses.get(0).s;
+                              }
+                              if (r.id <= 0 || byId.containsKey(r.id)) {
+                                  r.id = next++;
+                              }
+                              all.add(r);
+                              byId.put(r.id, r);
+                              if (!r.name.isEmpty()) {
+                                  byName.put(r.name.toLowerCase(Locale.ROOT), r);
+                              }
+                              if (!r.xuid.isEmpty()) {
+                                  byXuid.put(r.xuid, r);
+                              }
+                          }
+                      }
+                      nextId = next;
+
+                      if (fromMain) {
+                          try {
+                              Files.copy(file.toPath(), bak.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                          } catch (Throwable ignored) {
+                          }
+                      }
+                  }
+              }
+
+              private Rec find(String name, String xuid) {
+                  String key = name.toLowerCase(Locale.ROOT);
+                  Rec r = null;
+                  if (!xuid.isEmpty()) {
+                      r = byXuid.get(xuid);
+                  }
+                  if (r == null) {
+                      Rec n = byName.get(key);
+                      if (n != null && (n.xuid.isEmpty() || xuid.isEmpty() || n.xuid.equals(xuid))) {
+                          r = n;
+                      }
+                  }
+                  if (r != null) {
+                      if (!xuid.isEmpty() && r.xuid.isEmpty()) {
+                          r.xuid = xuid;
+                          byXuid.put(xuid, r);
+                      }
+                      if (!r.name.equals(name)) {
+                          r.name = name;
+                          byName.put(key, r);
+                      }
+                  }
+                  return r;
+              }
+
+              private Rec create(String name, String xuid, long now) {
+                  Rec r = new Rec();
+                  r.id = nextId++;
+                  r.name = name;
+                  r.xuid = xuid;
+                  r.first = now;
+                  all.add(r);
+                  byId.put(r.id, r);
+                  byName.put(name.toLowerCase(Locale.ROOT), r);
+                  if (!xuid.isEmpty()) {
+                      byXuid.put(xuid, r);
+                  }
+                  return r;
+              }
+
+              public void join(String name, String xuid) {
+                  synchronized (lock) {
+                      long now = System.currentTimeMillis();
+                      String key = name.toLowerCase(Locale.ROOT);
+                      if (online.containsKey(key)) {
+                          return;
+                      }
+                      if (xuid == null) {
+                          xuid = "";
+                      }
+                      Rec r = find(name, xuid);
+                      if (r == null) {
+                          r = create(name, xuid, now);
+                      }
+                      Session last = r.ses.isEmpty() ? null : r.ses.get(r.ses.size() - 1);
+                      Session cur;
+                      if (last != null && now >= last.e && now - last.e <= gapMs) {
+                          last.e = now;
+                          cur = last;
+                      } else {
+                          cur = new Session();
+                          cur.s = now;
+                          cur.e = now;
+                          r.ses.add(cur);
+                      }
+                      Online o = new Online();
+                      o.rec = r;
+                      o.ses = cur;
+                      online.put(key, o);
+                      dirty = true;
+                  }
+              }
+
+              public void quit(String name) {
+                  synchronized (lock) {
+                      Online o = online.remove(name.toLowerCase(Locale.ROOT));
+                      if (o == null) {
+                          return;
+                      }
+                      long now = System.currentTimeMillis();
+                      if (now > o.ses.e) {
+                          o.ses.e = now;
+                      }
+                      dirty = true;
+                  }
+              }
+
+              public void heartbeat() {
+                  synchronized (lock) {
+                      touch(System.currentTimeMillis());
+                  }
+              }
+
+              public void closeAll() {
+                  synchronized (lock) {
+                      long now = System.currentTimeMillis();
+                      for (Online o : online.values()) {
+                          if (now > o.ses.e) {
+                              o.ses.e = now;
+                          }
+                      }
+                      online.clear();
+                      dirty = true;
+                  }
+              }
+
+              private void touch(long now) {
+                  for (Online o : online.values()) {
+                      if (now > o.ses.e) {
+                          o.ses.e = now;
+                      }
+                      dirty = true;
+                  }
+              }
+
+              public <T> T read(Function<Calc.Ctx, T> f, Calc.Cfg cfg) {
+                  synchronized (lock) {
+                      long now = System.currentTimeMillis();
+                      touch(now);
+                      Set<Rec> on = Collections.newSetFromMap(new IdentityHashMap<Rec, Boolean>());
+                      for (Online o : online.values()) {
+                          on.add(o.rec);
+                      }
+                      Calc.Ctx c = new Calc.Ctx(new ArrayList<>(all), on, now, startedAt, cfg);
+                      return f.apply(c);
+                  }
+              }
+
+              public void save() {
+                  synchronized (ioLock) {
+                      String json;
+                      synchronized (lock) {
+                          if (!dirty) {
+                              return;
+                          }
+                          Root root = new Root();
+                          root.startedAt = startedAt;
+                          root.nextId = nextId;
+                          root.players = new ArrayList<>(all);
+                          json = gson.toJson(root);
+                          dirty = false;
+                      }
+                      try {
+                          File parent = file.getParentFile();
+                          if (parent != null && !parent.exists()) {
+                              parent.mkdirs();
+                          }
+                          File tmp = new File(file.getPath() + ".tmp");
+                          try (OutputStream o = new FileOutputStream(tmp)) {
+                              o.write(json.getBytes(StandardCharsets.UTF_8));
+                              o.flush();
+                          }
+                          try {
+                              Files.move(tmp.toPath(), file.toPath(),
+                                      StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                          } catch (Throwable t) {
+                              Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                          }
+                      } catch (Throwable t) {
+                          synchronized (lock) {
+                              dirty = true;
+                          }
+                      }
+                  }
+              }
+          }
+          EOF_STORE
+
+          cat > src/main/java/ru/eclips/statsmenu/Calc.java <<'EOF_CALC'
+          package ru.eclips.statsmenu;
+
+          import java.time.ZoneId;
+          import java.util.ArrayList;
+          import java.util.Collections;
+          import java.util.Comparator;
+          import java.util.List;
+          import java.util.Set;
+
+          public class Calc {
+
+              public static final long HOUR = 3600000L;
+              public static final long DAY = 86400000L;
+
+              public static class Cfg {
+                  public int returning = 3;
+                  public int loyal = 20;
+                  public int inactiveDays = 7;
+                  public long graceMs = 24L * HOUR;
+                  public ZoneId zone = ZoneId.systemDefault();
+                  public ZoneId msk = ZoneId.of("Europe/Moscow");
+                  public int winStart = 7;
+                  public int winEnd = 22;
+                  public int primeHours = 2;
+                  public int peakPct = 90;
+              }
+
+              public static class Row {
+                  public int id;
+                  public String name;
+                  public String line;
+              }
+
+              public static class Ctx {
+                  public final List<Store.Rec> recs;
+                  public final Set<Store.Rec> online;
+                  public final long now;
+                  public final long startedAt;
+                  public final Cfg cfg;
+
+                  public Ctx(List<Store.Rec> recs, Set<Store.Rec> online, long now, long startedAt, Cfg cfg) {
+                      this.recs = recs;
+                      this.online = online;
+                      this.now = now;
+                      this.startedAt = startedAt;
+                      this.cfg = cfg;
+                  }
+
+                  public boolean isOn(Store.Rec r) {
+                      return online.contains(r);
+                  }
+
+                  public double elapsedDays() {
+                      return Math.max(0L, now - startedAt) / (double) DAY;
+                  }
+
+                  public double eff(int p) {
+                      return Math.max(1.0, Math.min((double) p, elapsedDays()));
+                  }
+
+                  public int blocks(int p) {
+                      int n = (int) Math.ceil(elapsedDays());
+                      if (n < 1) {
+                          n = 1;
+                      }
+                      return Math.min(p, n);
+                  }
+              }
+
+              private static class Item {
+                  final Store.Rec r;
+                  final long v;
+                  final String line;
+
+                  Item(Store.Rec r, long v, String line) {
+                      this.r = r;
+                      this.v = v;
+                      this.line = line;
+                  }
+              }
+
+              private static class Stable {
+                  int elig = 0;
+                  int nb = 1;
+                  boolean dayMode = true;
+                  List<Store.Rec> list = new ArrayList<>();
+              }
+
+              // ---------- вспомогательные функции ----------
+
+              private static long total(Store.Rec r) {
+                  long t = 0;
+                  for (Store.Session s : r.ses) {
+                      t += Math.max(0L, s.e - s.s);
+                  }
+                  return t;
+              }
+
+              private static long inWin(Store.Rec r, long from, long to) {
+                  long t = 0;
+                  for (Store.Session s : r.ses) {
+                      long a = Math.max(s.s, from);
+                      long b = Math.min(s.e, to);
+                      if (b > a) {
+                          t += b - a;
+                      }
+                  }
+                  return t;
+              }
+
+              private static boolean active(Store.Rec r, long from, long to) {
+                  for (Store.Session s : r.ses) {
+                      if (s.s < to && s.e >= from) {
+                          return true;
+                      }
+                  }
+                  return false;
+              }
+
+              private static long lastEnd(Store.Rec r) {
+                  return r.ses.isEmpty() ? r.first : r.ses.get(r.ses.size() - 1).e;
+              }
+
+              private static long longest(Store.Rec r) {
+                  long m = 0;
+                  for (Store.Session s : r.ses) {
+                      m = Math.max(m, s.e - s.s);
+                  }
+                  return m;
+              }
+
+              private static long avgSes(Store.Rec r) {
+                  return r.ses.isEmpty() ? 0L : total(r) / r.ses.size();
+              }
+
+              private static long firstDur(Store.Rec r) {
+                  if (r.ses.isEmpty()) {
+                      return 0L;
+                  }
+                  Store.Session s = r.ses.get(0);
+                  return Math.max(0L, s.e - s.s);
+              }
+
+              private static boolean firstDone(Store.Rec r, Ctx c) {
+                  return !r.ses.isEmpty() && !(c.isOn(r) && r.ses.size() == 1);
+              }
+
+              private static boolean isBounce(Store.Rec r, Ctx c) {
+                  return r.ses.size() == 1 && !c.isOn(r) && c.now - lastEnd(r) >= c.cfg.graceMs;
+              }
+
+              private static boolean isInactive(Store.Rec r, Ctx c) {
+                  return !c.isOn(r) && c.now - lastEnd(r) >= c.cfg.inactiveDays * DAY;
+              }
+
+              private static Stable stable(int p, Ctx c) {
+                  Stable st = new Stable();
+                  int nb = (p <= 1) ? 1 : c.blocks(p);
+                  st.nb = nb;
+                  st.dayMode = nb <= 1;
+                  for (Store.Rec r : c.recs) {
+                      if (st.dayMode) {
+                          st.elig++;
+                          if (active(r, c.now - DAY, c.now)) {
+                              st.list.add(r);
+                          }
+                      } else if (r.first <= c.now - nb * DAY) {
+                          st.elig++;
+                          boolean all = true;
+                          for (int i = 0; i < nb; i++) {
+                              if (!active(r, c.now - (i + 1) * DAY, c.now - i * DAY)) {
+                                  all = false;
+                                  break;
+                              }
+                          }
+                          if (all) {
+                              st.list.add(r);
+                          }
+                      }
+                  }
+                  return st;
+              }
+
+              private static int activeDays(Store.Rec r, int nb, Ctx c) {
+                  int k = 0;
+                  for (int i = 0; i < nb; i++) {
+                      if (active(r, c.now - (i + 1) * DAY, c.now - i * DAY)) {
+                          k++;
+                      }
+                  }
+                  return k;
+              }
+
+              private static String h(String s) {
+                  return "§l§3" + s + "§r\n";
+              }
+
+              private static String b(String s) {
+                  return "§l" + s + "§r";
+              }
+
+              private static String note(Ctx c) {
+                  double d = c.elapsedDays();
+                  if (d >= 30.0) {
+                      return "";
+                  }
+                  return "\n§3Данные копятся с " + Fmt.date(c.startedAt, c.cfg.zone)
+                          + " (" + Fmt.f1(d) + " дн.), поэтому средние считаются по фактическим дням.§r";
+              }
+
+              private static String basic(Store.Rec r) {
+                  return r.ses.size() + " сесс. · ср. " + Fmt.dur(avgSes(r)) + " · всего " + Fmt.dur(total(r));
+              }
+
+              // ---------- публичный интерфейс ----------
+
+              public static String pname(int p) {
+                  if (p == 1) {
+                      return "день";
+                  }
+                  if (p == 7) {
+                      return "неделю";
+                  }
+                  if (p == 30) {
+                      return "месяц";
+                  }
+                  return "всё время";
+              }
+
+              public static String listBtn(int p) {
+                  return p < 0 ? "Список ников" : "Ники за " + pname(p);
+              }
+
+              public static String title(int m, Cfg cfg) {
+                  switch (m) {
+                      case 1:
+                          return "Новые игроки в день";
+                      case 2:
+                          return "Время в первый заход";
+                      case 3:
+                          return "Зашли 1 раз и не вернулись";
+                      case 4:
+                          return "Вернулись " + cfg.returning + "+ раз";
+                      case 5:
+                          return "Вернулись " + cfg.loyal + "+ раз";
+                      case 6:
+                          return "Уникальные заходы в день";
+                      case 7:
+                          return "Часов онлайн в день";
+                      case 8:
+                          return "Заходят каждый день";
+                      case 10:
+                          return "Онлайн " + pad(cfg.winStart) + "–" + pad(cfg.winEnd) + " МСК";
+                      case 11:
+                          return "Пик онлайна";
+                      case 12:
+                          return "Прайм-тайм";
+                      default:
+                          return "Не заходят " + cfg.inactiveDays + "+ дн.";
+                  }
+              }
+
+              public static int[] periods(int m) {
+                  switch (m) {
+                      case 1:
+                      case 6:
+                      case 7:
+                      case 8:
+                          return new int[]{1, 7, 30};
+                      case 2:
+                          return new int[]{1, 7, 30, 0};
+                      case 10:
+                      case 11:
+                      case 12:
+                          return new int[]{1, 7, 30};
+                      default:
+                          return new int[]{-1};
+                  }
+              }
+
+              public static String text(int m, Ctx c) {
+                  switch (m) {
+                      case 1:
+                          return t1(c);
+                      case 2:
+                          return t2(c);
+                      case 3:
+                          return t3(c);
+                      case 4:
+                          return loyalText("Вернулись " + c.cfg.returning + "+ раз", c.cfg.returning, c);
+                      case 5:
+                          return loyalText("Вернулись " + c.cfg.loyal + "+ раз", c.cfg.loyal, c);
+                      case 6:
+                          return t6(c);
+                      case 7:
+                          return t7(c);
+                      case 8:
+                          return t8(c);
+                      default:
+                          return t9(c);
+                      case 10:
+                          return t10(c);
+                      case 11:
+                          return t11(c);
+                      case 12:
+                          return t12(c);
+                  }
+              }
+
+              private static String t1(Ctx c) {
+                  StringBuilder sb = new StringBuilder(h("Новые игроки"));
+                  sb.append("Сколько новых игроков приходит на сервер в среднем за день.\n\n");
+                  for (int p : new int[]{1, 7, 30}) {
+                      long cut = c.now - p * DAY;
+                      int n = 0;
+                      for (Store.Rec r : c.recs) {
+                          if (r.first >= cut) {
+                              n++;
+                          }
+                      }
+                      sb.append(b("За " + pname(p) + ":")).append(" новых ").append(n)
+                              .append(", в среднем ").append(b(Fmt.f1(n / c.eff(p)))).append(" в день\n");
+                  }
+                  sb.append(note(c));
+                  return sb.toString();
+              }
+
+              private static String t2(Ctx c) {
+                  StringBuilder sb = new StringBuilder(h("Время в первый заход"));
+                  sb.append("Сколько игрок проводит на сервере в самой первой сессии. Незавершённые первые сессии не учитываются.\n\n");
+                  for (int p : new int[]{1, 7, 30, 0}) {
+                      long cut = p > 0 ? c.now - p * DAY : 0L;
+                      List<Long> d = new ArrayList<>();
+                      for (Store.Rec r : c.recs) {
+                          if (r.first >= cut && firstDone(r, c)) {
+                              d.add(firstDur(r));
+                          }
+                      }
+                      sb.append(b("За " + pname(p) + ":")).append(' ');
+                      if (d.isEmpty()) {
+                          sb.append("нет данных\n");
+                          continue;
+                      }
+                      long sum = 0;
+                      for (long x : d) {
+                          sum += x;
+                      }
+                      Collections.sort(d);
+                      long med = d.get(d.size() / 2);
+                      sb.append("игроков ").append(d.size()).append(", среднее ").append(b(Fmt.dur(sum / d.size())))
+                              .append(", медиана ").append(Fmt.dur(med)).append('\n');
+                  }
+                  sb.append(note(c));
+                  return sb.toString();
+              }
+
+              private static String t3(Ctx c) {
+                  StringBuilder sb = new StringBuilder(h("Зашли 1 раз и не вернулись"));
+                  sb.append("Игроки с одной сессией, которые не появлялись больше ")
+                          .append(c.cfg.graceMs / HOUR).append(" ч.\n\n");
+                  int n = 0;
+                  long tot = 0;
+                  for (Store.Rec r : c.recs) {
+                      if (isBounce(r, c)) {
+                          n++;
+                          tot += total(r);
+                      }
+                  }
+                  sb.append(b("Игроков:")).append(' ').append(n).append(" (").append(b(Fmt.pct(n, c.recs.size())))
+                          .append(" от ").append(c.recs.size()).append(" в базе)\n");
+                  if (n > 0) {
+                      sb.append(b("Среднее время в игре:")).append(' ').append(Fmt.dur(tot / n)).append('\n');
+                      sb.append(b("Суммарное время:")).append(' ').append(Fmt.dur(tot)).append('\n');
+                  }
+                  sb.append(note(c));
+                  return sb.toString();
+              }
+
+              private static String loyalText(String head, int t, Ctx c) {
+                  StringBuilder sb = new StringBuilder(h(head));
+                  sb.append("Игроки, у которых набралось ").append(t).append(" и более сессий.\n\n");
+                  int n = 0;
+                  long tot = 0;
+                  long ses = 0;
+                  for (Store.Rec r : c.recs) {
+                      if (r.ses.size() >= t) {
+                          n++;
+                          tot += total(r);
+                          ses += r.ses.size();
+                      }
+                  }
+                  sb.append(b("Игроков:")).append(' ').append(n).append(" (").append(b(Fmt.pct(n, c.recs.size())))
+                          .append(" от ").append(c.recs.size()).append(" в базе)\n");
+                  if (n > 0 && ses > 0) {
+                      sb.append(b("Средняя сессия:")).append(' ').append(Fmt.dur(tot / ses)).append('\n');
+                      sb.append(b("Средний общий онлайн на игрока:")).append(' ').append(Fmt.dur(tot / n)).append('\n');
+                      sb.append(b("Суммарный онлайн группы:")).append(' ').append(Fmt.dur(tot)).append('\n');
+                  }
+                  sb.append(note(c));
+                  return sb.toString();
+              }
+
+              private static String t6(Ctx c) {
+                  StringBuilder sb = new StringBuilder(h("Уникальные заходы в день"));
+                  sb.append("Сколько разных игроков заходит на сервер в среднем за сутки.\n\n");
+                  for (int p : new int[]{1, 7, 30}) {
+                      int nb = c.blocks(p);
+                      long sum = 0;
+                      for (int i = 0; i < nb; i++) {
+                          for (Store.Rec r : c.recs) {
+                              if (active(r, c.now - (i + 1) * DAY, c.now - i * DAY)) {
+                                  sum++;
+                              }
+                          }
+                      }
+                      int uniq = 0;
+                      for (Store.Rec r : c.recs) {
+                          if (active(r, c.now - p * DAY, c.now)) {
+                              uniq++;
+                          }
+                      }
+                      sb.append(b("За " + pname(p) + ":")).append(" в среднем ").append(b(Fmt.f1((double) sum / nb)))
+                              .append(" в день (всего разных игроков: ").append(uniq).append(")\n");
+                  }
+                  sb.append(note(c));
+                  return sb.toString();
+              }
+
+              private static String t7(Ctx c) {
+                  StringBuilder sb = new StringBuilder(h("Часов онлайн в день"));
+                  sb.append("Сколько часов в сумме отыгрывают все игроки вместе за сутки.\n\n");
+                  for (int p : new int[]{1, 7, 30}) {
+                      long sum = 0;
+                      for (Store.Rec r : c.recs) {
+                          sum += inWin(r, c.now - p * DAY, c.now);
+                      }
+                      double perDay = sum / (double) HOUR / c.eff(p);
+                      sb.append(b("За " + pname(p) + ":")).append(" всего ").append(Fmt.dur(sum))
+                              .append(", в среднем ").append(b(Fmt.f2(perDay) + " ч")).append(" в день\n");
+                  }
+                  sb.append(note(c));
+                  return sb.toString();
+              }
+
+              private static String t8(Ctx c) {
+                  StringBuilder sb = new StringBuilder(h("Заходят каждый день"));
+                  sb.append("Игроки, заходившие в каждые сутки периода. Для недели и месяца учитываются только игроки, ")
+                          .append("зарегистрированные раньше начала периода.\n\n");
+                  for (int p : new int[]{1, 7, 30}) {
+                      Stable s = stable(p, c);
+                      sb.append(b("За " + pname(p) + ":")).append(' ');
+                      if (s.elig == 0) {
+                          sb.append("нет данных\n");
+                          continue;
+                      }
+                      sb.append(s.list.size()).append(" из ").append(s.elig).append(" (")
+                              .append(b(Fmt.pct(s.list.size(), s.elig))).append(")");
+                      if (p > 1 && s.dayMode) {
+                          sb.append(" — данных пока мало, считаются заходы за последние 24 ч");
+                      }
+                      sb.append('\n');
+                  }
+                  sb.append(note(c));
+                  return sb.toString();
+              }
+
+              private static String t9(Ctx c) {
+                  StringBuilder sb = new StringBuilder(h("Не заходят " + c.cfg.inactiveDays + "+ дн."));
+                  sb.append("Игроки, которых не было на сервере больше ").append(c.cfg.inactiveDays).append(" дн.\n\n");
+                  int n = 0;
+                  long tot = 0;
+                  long ses = 0;
+                  for (Store.Rec r : c.recs) {
+                      if (isInactive(r, c)) {
+                          n++;
+                          tot += total(r);
+                          ses += r.ses.size();
+                      }
+                  }
+                  sb.append(b("Игроков:")).append(' ').append(n).append(" (").append(b(Fmt.pct(n, c.recs.size())))
+                          .append(" от ").append(c.recs.size()).append(" в базе)\n");
+                  if (n > 0 && ses > 0) {
+                      sb.append(b("Сессий на игрока:")).append(' ').append(Fmt.f1((double) ses / n)).append('\n');
+                      sb.append(b("Средняя сессия:")).append(' ').append(Fmt.dur(tot / ses)).append('\n');
+                      sb.append(b("Средний общий онлайн на игрока:")).append(' ').append(Fmt.dur(tot / n)).append('\n');
+                      sb.append(b("Суммарный онлайн группы:")).append(' ').append(Fmt.dur(tot)).append('\n');
+                  }
+                  sb.append(note(c));
+                  return sb.toString();
+              }
+
+              // ---------- списки ников ----------
+
+              private static List<Row> toRows(List<Item> items) {
+                  Collections.sort(items, new Comparator<Item>() {
+                      @Override
+                      public int compare(Item a, Item b) {
+                          int x = Long.compare(b.v, a.v);
+                          if (x != 0) {
+                              return x;
+                          }
+                          return a.r.name.compareToIgnoreCase(b.r.name);
+                      }
+                  });
+                  List<Row> out = new ArrayList<>();
+                  for (Item it : items) {
+                      Row row = new Row();
+                      row.id = it.r.id;
+                      row.name = it.r.name;
+                      row.line = it.line;
+                      out.add(row);
+                  }
+                  return out;
+              }
+
+              public static List<Row> rows(int m, int p, Ctx c) {
+                  if (m >= 10) {
+                      return rowsTime(m, p, c);
+                  }
+                  List<Item> items = new ArrayList<>();
+                  long now = c.now;
+                  long cut = p > 0 ? now - p * DAY : 0L;
+                  switch (m) {
+                      case 1:
+                          for (Store.Rec r : c.recs) {
+                              if (r.first >= cut) {
+                                  items.add(new Item(r, r.first, "новый: " + Fmt.dateS(r.first, c.cfg.zone)));
+                              }
+                          }
+                          break;
+                      case 2:
+                          for (Store.Rec r : c.recs) {
+                              if (r.first >= cut && firstDone(r, c)) {
+                                  items.add(new Item(r, r.first, "1-й заход: " + Fmt.dur(firstDur(r))));
+                              }
+                          }
+                          break;
+                      case 3:
+                          for (Store.Rec r : c.recs) {
+                              if (isBounce(r, c)) {
+                                  items.add(new Item(r, lastEnd(r),
+                                          "в игре: " + Fmt.dur(total(r)) + " · был " + Fmt.dateS(lastEnd(r), c.cfg.zone)));
+                              }
+                          }
+                          break;
+                      case 4:
+                          for (Store.Rec r : c.recs) {
+                              if (r.ses.size() >= c.cfg.returning) {
+                                  items.add(new Item(r, total(r), basic(r)));
+                              }
+                          }
+                          break;
+                      case 5:
+                          for (Store.Rec r : c.recs) {
+                              if (r.ses.size() >= c.cfg.loyal) {
+                                  items.add(new Item(r, total(r), basic(r)));
+                              }
+                          }
+                          break;
+                      case 6: {
+                          int nb = c.blocks(p);
+                          for (Store.Rec r : c.recs) {
+                              if (active(r, now - p * DAY, now)) {
+                                  int k = activeDays(r, nb, c);
+                                  items.add(new Item(r, k, "дней с заходом: " + k + " из " + nb));
+                              }
+                          }
+                          break;
+                      }
+                      case 7:
+                          for (Store.Rec r : c.recs) {
+                              long w = inWin(r, now - p * DAY, now);
+                              if (w > 0) {
+                                  items.add(new Item(r, w, "за период: " + Fmt.dur(w)));
+                              }
+                          }
+                          break;
+                      case 8: {
+                          Stable s = stable(p, c);
+                          for (Store.Rec r : s.list) {
+                              items.add(new Item(r, total(r), r.ses.size() + " сесс. · всего " + Fmt.dur(total(r))));
+                          }
+                          break;
+                      }
+                      default:
+                          for (Store.Rec r : c.recs) {
+                              if (isInactive(r, c)) {
+                                  items.add(new Item(r, now - lastEnd(r),
+                                          basic(r) + " · был " + Fmt.dateS(lastEnd(r), c.cfg.zone)));
+                              }
+                          }
+                          break;
+                  }
+                  return toRows(items);
+              }
+
+              // ---------- онлайн по времени суток (МСК) ----------
+
+              private static final long SLOT = 1800000L;
+              private static final int SLOTS = 48;
+
+              private static class PeakInfo {
+                  double avg = 0;
+                  long max = 0;
+                  long maxTime = 0;
+                  int blocks = 0;
+              }
+
+              private static class Prime {
+                  boolean ok = false;
+                  int startSlot = 0;
+                  double avgOnline = 0;
+                  int runStart = 0;
+                  int runLen = 0;
+                  double avgDistinct = 0;
+                  int days = 0;
+                  List<long[]> wins = new ArrayList<>();
+              }
+
+              private static String pad(int v) {
+                  return String.format(java.util.Locale.ROOT, "%02d", v);
+              }
+
+              private static String hhmm(int slot) {
+                  int mins = (slot % SLOTS) * 30;
+                  return String.format(java.util.Locale.ROOT, "%02d:%02d", mins / 60, mins % 60);
+              }
+
+              private static long offMs(Ctx c) {
+                  return c.cfg.msk.getRules().getOffset(java.time.Instant.ofEpochMilli(c.now)).getTotalSeconds() * 1000L;
+              }
+
+              private static long dayStart(long t, long off) {
+                  return Math.floorDiv(t + off, DAY) * DAY - off;
+              }
+
+              private static long rangeFrom(Ctx c, int p) {
+                  return Math.max(c.now - p * DAY, c.startedAt);
+              }
+
+              private static void addRange(double[] arr, long a, long b, long off) {
+                  long t = a;
+                  while (t < b) {
+                      long local = t + off;
+                      int idx = (int) (Math.floorMod(local, DAY) / SLOT);
+                      long next = (Math.floorDiv(local, SLOT) + 1) * SLOT - off;
+                      long end = Math.min(b, next);
+                      arr[idx] += end - t;
+                      t = end;
+                  }
+              }
+
+              private static List<long[]> dayWins(Ctx c, int p) {
+                  long off = offMs(c);
+                  long from = rangeFrom(c, p);
+                  long sh = c.cfg.winStart * HOUR;
+                  long eh = c.cfg.winEnd * HOUR;
+                  if (eh <= sh) {
+                      eh += 24L * HOUR;
+                  }
+                  List<long[]> out = new ArrayList<>();
+                  long ds = dayStart(from, off) - DAY;
+                  long de = dayStart(c.now, off);
+                  for (long d = ds; d <= de; d += DAY) {
+                      long a = Math.max(d + sh, from);
+                      long z = Math.min(d + eh, c.now);
+                      if (z > a) {
+                          out.add(new long[]{a, z});
+                      }
+                  }
+                  return out;
+              }
+
+              private static long inWins(Store.Rec r, List<long[]> wins) {
+                  long t = 0;
+                  for (long[] w : wins) {
+                      t += inWin(r, w[0], w[1]);
+                  }
+                  return t;
+              }
+
+              private static long[] peak(Ctx c, long from, long to) {
+                  List<long[]> ev = new ArrayList<>();
+                  for (Store.Rec r : c.recs) {
+                      for (Store.Session s : r.ses) {
+                          long a = Math.max(s.s, from);
+                          long z = Math.min(s.e, to);
+                          if (z > a) {
+                              ev.add(new long[]{a, 1L});
+                              ev.add(new long[]{z, -1L});
+                          }
+                      }
+                  }
+                  Collections.sort(ev, new Comparator<long[]>() {
+                      @Override
+                      public int compare(long[] x, long[] y) {
+                          int k = Long.compare(x[0], y[0]);
+                          return k != 0 ? k : Long.compare(x[1], y[1]);
+                      }
+                  });
+                  long cur = 0;
+                  long max = 0;
+                  long tm = from;
+                  for (long[] e : ev) {
+                      cur += e[1];
+                      if (cur > max) {
+                          max = cur;
+                          tm = e[0];
+                      }
+                  }
+                  return new long[]{max, tm};
+              }
+
+              private static PeakInfo peakInfo(int p, Ctx c) {
+                  PeakInfo pi = new PeakInfo();
+                  int nb = (p <= 1) ? 1 : c.blocks(p);
+                  double sum = 0;
+                  int used = 0;
+                  for (int i = 0; i < nb; i++) {
+                      long to = c.now - i * DAY;
+                      long from = Math.max(to - DAY, c.startedAt);
+                      if (to <= from) {
+                          continue;
+                      }
+                      long[] pk = peak(c, from, to);
+                      sum += pk[0];
+                      used++;
+                      if (pk[0] > pi.max) {
+                          pi.max = pk[0];
+                          pi.maxTime = pk[1];
+                      }
+                  }
+                  pi.blocks = used;
+                  pi.avg = used > 0 ? sum / used : 0;
+                  return pi;
+              }
+
+              private static Prime prime(int p, Ctx c) {
+                  Prime pr = new Prime();
+                  long off = offMs(c);
+                  long from = rangeFrom(c, p);
+                  if (c.now <= from) {
+                      return pr;
+                  }
+                  double[] pm = new double[SLOTS];
+                  double[] cv = new double[SLOTS];
+                  addRange(cv, from, c.now, off);
+                  for (Store.Rec r : c.recs) {
+                      for (Store.Session s : r.ses) {
+                          long a = Math.max(s.s, from);
+                          long z = Math.min(s.e, c.now);
+                          if (z > a) {
+                              addRange(pm, a, z, off);
+                          }
+                      }
+                  }
+                  int len = c.cfg.primeHours * 2;
+                  double best = -1;
+                  int bs = -1;
+                  for (int k = 0; k < SLOTS; k++) {
+                      double sp = 0;
+                      double sc = 0;
+                      boolean good = true;
+                      for (int j = 0; j < len; j++) {
+                          int i = (k + j) % SLOTS;
+                          if (cv[i] <= 0) {
+                              good = false;
+                              break;
+                          }
+                          sp += pm[i];
+                          sc += cv[i];
+                      }
+                      if (!good) {
+                          continue;
+                      }
+                      double avg = sp / sc;
+                      if (avg > best) {
+                          best = avg;
+                          bs = k;
+                      }
+                  }
+                  if (bs < 0 || best <= 0) {
+                      return pr;
+                  }
+                  double pk = -1;
+                  int ps = -1;
+                  for (int i = 0; i < SLOTS; i++) {
+                      if (cv[i] > 0) {
+                          double a = pm[i] / cv[i];
+                          if (a > pk) {
+                              pk = a;
+                              ps = i;
+                          }
+                      }
+                  }
+                  if (ps < 0 || pk <= 0) {
+                      return pr;
+                  }
+                  double thr = pk * c.cfg.peakPct / 100.0;
+                  int left = 0;
+                  while (left < SLOTS - 1) {
+                      int i = ((ps - left - 1) % SLOTS + SLOTS) % SLOTS;
+                      if (cv[i] > 0 && pm[i] / cv[i] >= thr) {
+                          left++;
+                      } else {
+                          break;
+                      }
+                  }
+                  int right = 0;
+                  while (left + right < SLOTS - 1) {
+                      int i = (ps + right + 1) % SLOTS;
+                      if (cv[i] > 0 && pm[i] / cv[i] >= thr) {
+                          right++;
+                      } else {
+                          break;
+                      }
+                  }
+                  pr.ok = true;
+                  pr.startSlot = bs;
+                  pr.avgOnline = best;
+                  pr.runStart = ((ps - left) % SLOTS + SLOTS) % SLOTS;
+                  pr.runLen = left + right + 1;
+
+                  long wl = len * SLOT;
+                  long ds = dayStart(from, off) - DAY;
+                  long de = dayStart(c.now, off);
+                  for (long d = ds; d <= de; d += DAY) {
+                      long a = d + bs * SLOT;
+                      long z = a + wl;
+                      if (a >= from && z <= c.now) {
+                          pr.wins.add(new long[]{a, z});
+                      }
+                  }
+                  pr.days = pr.wins.size();
+                  if (pr.days > 0) {
+                      long sum = 0;
+                      for (long[] w : pr.wins) {
+                          for (Store.Rec r : c.recs) {
+                              if (active(r, w[0], w[1])) {
+                                  sum++;
+                              }
+                          }
+                      }
+                      pr.avgDistinct = (double) sum / pr.days;
+                  }
+                  return pr;
+              }
+
+              private static String t10(Ctx c) {
+                  StringBuilder sb = new StringBuilder(h(title(10, c.cfg)));
+                  sb.append("Сколько игроков в среднем одновременно онлайн в окне ")
+                          .append(pad(c.cfg.winStart)).append(":00–").append(pad(c.cfg.winEnd)).append(":00 по МСК.\n\n");
+                  for (int p : new int[]{1, 7, 30}) {
+                      List<long[]> wins = dayWins(c, p);
+                      long wl = 0;
+                      long pm = 0;
+                      for (long[] w : wins) {
+                          wl += w[1] - w[0];
+                      }
+                      for (Store.Rec r : c.recs) {
+                          pm += inWins(r, wins);
+                      }
+                      sb.append(b("За " + pname(p) + ":")).append(' ');
+                      if (wl <= 0) {
+                          sb.append("нет данных\n");
+                          continue;
+                      }
+                      sb.append("в среднем ").append(b(Fmt.f1((double) pm / wl))).append(" игроков онлайн (время окна в периоде: ")
+                              .append(Fmt.dur(wl)).append(")\n");
+                  }
+                  sb.append(note(c));
+                  return sb.toString();
+              }
+
+              private static String t11(Ctx c) {
+                  StringBuilder sb = new StringBuilder(h("Пик онлайна"));
+                  sb.append("Максимум игроков, одновременно бывших на сервере. Сутки считаются как 24 часа подряд, время по МСК.\n\n");
+                  for (int p : new int[]{1, 7, 30}) {
+                      PeakInfo pi = peakInfo(p, c);
+                      sb.append(b("За " + pname(p) + ":")).append(' ');
+                      if (pi.blocks == 0) {
+                          sb.append("нет данных\n");
+                          continue;
+                      }
+                      if (p == 1) {
+                          sb.append("пик ").append(b(String.valueOf(pi.max))).append(" игроков одновременно (")
+                                  .append(Fmt.dateS(pi.maxTime, c.cfg.msk)).append(" МСК)\n");
+                      } else {
+                          sb.append("средний дневной пик ").append(b(Fmt.f1(pi.avg))).append(", максимум ")
+                                  .append(pi.max).append(" (").append(Fmt.dateS(pi.maxTime, c.cfg.msk)).append(" МСК)\n");
+                      }
+                  }
+                  sb.append(note(c));
+                  return sb.toString();
+              }
+
+              private static String t12(Ctx c) {
+                  StringBuilder sb = new StringBuilder(h("Прайм-тайм"));
+                  sb.append("Самые загруженные ").append(c.cfg.primeHours)
+                          .append(" ч подряд (по получасовым интервалам, усреднено по дням периода), время по МСК.\n\n");
+                  for (int p : new int[]{1, 7, 30}) {
+                      Prime pr = prime(p, c);
+                      sb.append(b("За " + pname(p) + ":")).append('\n');
+                      if (!pr.ok) {
+                          sb.append("нет данных\n\n");
+                          continue;
+                      }
+                      int endSlot = (pr.startSlot + c.cfg.primeHours * 2) % SLOTS;
+                      sb.append("Прайм-тайм: ").append(b(hhmm(pr.startSlot) + "–" + hhmm(endSlot) + " МСК")).append('\n');
+                      sb.append("Онлайн в нём в среднем: ").append(b(Fmt.f1(pr.avgOnline))).append('\n');
+                      if (pr.days > 0) {
+                          sb.append("Заходит игроков в день: ").append(b(Fmt.f1(pr.avgDistinct)))
+                                  .append(" (дней в расчёте: ").append(pr.days).append(")\n");
+                      } else {
+                          sb.append("Заходит игроков в день: нет данных (мало дней)\n");
+                      }
+                      sb.append("Онлайн не ниже ").append(c.cfg.peakPct).append("% от пика держится: ");
+                      if (pr.runLen >= SLOTS) {
+                          sb.append(b("весь день")).append('\n');
+                      } else {
+                          int runEnd = (pr.runStart + pr.runLen) % SLOTS;
+                          sb.append(b(Fmt.dur(pr.runLen * SLOT))).append(" (").append(hhmm(pr.runStart)).append("–")
+                                  .append(hhmm(runEnd)).append(" МСК)\n");
+                      }
+                      sb.append('\n');
+                  }
+                  sb.append(note(c));
+                  return sb.toString();
+              }
+
+              private static List<Row> rowsTime(int m, int p, Ctx c) {
+                  List<Item> items = new ArrayList<>();
+                  if (m == 10) {
+                      List<long[]> wins = dayWins(c, p);
+                      for (Store.Rec r : c.recs) {
+                          long w = inWins(r, wins);
+                          if (w > 0) {
+                              items.add(new Item(r, w, "в окне: " + Fmt.dur(w)));
+                          }
+                      }
+                  } else if (m == 11) {
+                      PeakInfo pi = peakInfo(p, c);
+                      if (pi.blocks > 0 && pi.max > 0) {
+                          long tm = pi.maxTime;
+                          for (Store.Rec r : c.recs) {
+                              boolean on = false;
+                              for (Store.Session s : r.ses) {
+                                  if (s.s <= tm && s.e > tm) {
+                                      on = true;
+                                      break;
+                                  }
+                              }
+                              if (on) {
+                                  items.add(new Item(r, total(r), "в пик · всего " + Fmt.dur(total(r))));
+                              }
+                          }
+                      }
+                  } else {
+                      Prime pr = prime(p, c);
+                      if (pr.ok) {
+                          for (Store.Rec r : c.recs) {
+                              long w = inWins(r, pr.wins);
+                              if (w > 0) {
+                                  items.add(new Item(r, w, "в прайме: " + Fmt.dur(w)));
+                              }
+                          }
+                      }
+                  }
+                  return toRows(items);
+              }
+
+              // ---------- карточка игрока ----------
+
+              public static String card(Store.Rec r, Ctx c) {
+                  StringBuilder sb = new StringBuilder();
+                  sb.append(b("Первый заход:")).append(' ').append(Fmt.date(r.first, c.cfg.zone)).append('\n');
+                  sb.append(b("Последний заход:")).append(' ')
+                          .append(c.isOn(r) ? "сейчас онлайн" : Fmt.date(lastEnd(r), c.cfg.zone)).append('\n');
+                  sb.append(b("Сессий:")).append(' ').append(r.ses.size()).append('\n');
+                  sb.append(b("Средняя сессия:")).append(' ').append(Fmt.dur(avgSes(r))).append('\n');
+                  sb.append(b("Самая длинная сессия:")).append(' ').append(Fmt.dur(longest(r))).append('\n');
+                  sb.append(b("Первая сессия:")).append(' ').append(Fmt.dur(firstDur(r))).append('\n');
+                  sb.append(b("Общий онлайн:")).append(' ').append(Fmt.dur(total(r))).append('\n');
+                  sb.append(b("Онлайн за 7 дней:")).append(' ').append(Fmt.dur(inWin(r, c.now - 7 * DAY, c.now))).append('\n');
+                  if (!r.ses.isEmpty()) {
+                      sb.append("\n").append(b("Последние сессии:")).append('\n');
+                      int stop = Math.max(0, r.ses.size() - 5);
+                      for (int i = r.ses.size() - 1; i >= stop; i--) {
+                          Store.Session s = r.ses.get(i);
+                          sb.append(Fmt.date(s.s, c.cfg.zone)).append(" · ").append(Fmt.dur(s.e - s.s)).append('\n');
+                      }
+                  }
+                  return sb.toString();
+              }
+          }
+          EOF_CALC
+
+          cat > src/main/java/ru/eclips/statsmenu/StatsPlugin.java <<'EOF_MAIN'
+          package ru.eclips.statsmenu;
+
+          import cn.nukkit.Player;
+          import cn.nukkit.command.Command;
+          import cn.nukkit.command.CommandSender;
+          import cn.nukkit.event.EventHandler;
+          import cn.nukkit.event.Listener;
+          import cn.nukkit.event.player.PlayerFormRespondedEvent;
+          import cn.nukkit.event.player.PlayerJoinEvent;
+          import cn.nukkit.event.player.PlayerQuitEvent;
+          import cn.nukkit.form.element.ElementButton;
+          import cn.nukkit.form.response.FormResponseSimple;
+          import cn.nukkit.form.window.FormWindowSimple;
+          import cn.nukkit.plugin.PluginBase;
+          import cn.nukkit.utils.Config;
+
+          import java.io.File;
+          import java.time.ZoneId;
+          import java.util.ArrayList;
+          import java.util.HashSet;
+          import java.util.List;
+          import java.util.Locale;
+          import java.util.Map;
+          import java.util.Set;
+          import java.util.UUID;
+          import java.util.concurrent.ConcurrentHashMap;
+          import java.util.concurrent.ExecutorService;
+          import java.util.concurrent.Executors;
+          import java.util.concurrent.TimeUnit;
+          import java.util.function.Function;
+
+          public class StatsPlugin extends PluginBase implements Listener {
+
+              private static class Screen {
+                  String title = "";
+                  String content = "";
+                  final List<String> labels = new ArrayList<>();
+                  final List<Runnable> acts = new ArrayList<>();
+
+                  void btn(String label, Runnable action) {
+                      labels.add("§l§0" + label);
+                      acts.add(action);
+                  }
+              }
+
+              private static class Ui {
+                  final int formId;
+                  final List<Runnable> acts;
+
+                  Ui(int formId, List<Runnable> acts) {
+                      this.formId = formId;
+                      this.acts = acts;
+                  }
+              }
+
+              private Store store;
+              private ExecutorService pool;
+              private final Calc.Cfg cfg = new Calc.Cfg();
+              private final Set<String> exclude = new HashSet<>();
+              private final Map<UUID, Ui> ui = new ConcurrentHashMap<>();
+              private int pageSize = 10;
+
+              private static int clamp(int v, int lo, int hi) {
+                  return Math.max(lo, Math.min(hi, v));
+              }
+
+              private void dbg(Throwable t) {
+                  try {
+                      getLogger().warning("[StatsMenu] " + t);
+                  } catch (Throwable ignored) {
+                  }
+              }
+
+              @Override
+              public void onEnable() {
+                  try {
+                      getDataFolder().mkdirs();
+                  } catch (Throwable ignored) {
+                  }
+                  try {
+                      saveDefaultConfig();
+                  } catch (Throwable t) {
+                      dbg(t);
+                  }
+
+                  int mergeSec = 60;
+                  int saveSec = 60;
+                  try {
+                      Config conf = getConfig();
+                      mergeSec = clamp(conf.getInt("session-merge-seconds", 60), 0, 3600);
+                      saveSec = clamp(conf.getInt("save-interval-seconds", 60), 10, 3600);
+                      cfg.returning = clamp(conf.getInt("returning-sessions", 3), 2, 100000);
+                      cfg.loyal = clamp(conf.getInt("loyal-sessions", 20), 2, 100000);
+                      cfg.graceMs = clamp(conf.getInt("bounce-grace-hours", 24), 1, 24 * 365) * Calc.HOUR;
+                      cfg.inactiveDays = clamp(conf.getInt("inactive-days", 7), 1, 3650);
+                      cfg.winStart = clamp(conf.getInt("day-window-start-hour", 7), 0, 23);
+                      cfg.winEnd = clamp(conf.getInt("day-window-end-hour", 22), 1, 24);
+                      cfg.primeHours = clamp(conf.getInt("prime-length-hours", 2), 1, 12);
+                      cfg.peakPct = clamp(conf.getInt("prime-peak-threshold-percent", 90), 50, 100);
+                      String mz = conf.getString("msk-zone", "Europe/Moscow");
+                      if (mz != null && !mz.trim().isEmpty()) {
+                          try {
+                              cfg.msk = ZoneId.of(mz.trim());
+                          } catch (Throwable ignored) {
+                          }
+                      }
+                      pageSize = clamp(conf.getInt("page-size", 10), 3, 20);
+                      List<String> ex = conf.getStringList("exclude-names");
+                      if (ex != null) {
+                          for (String s : ex) {
+                              if (s != null && !s.trim().isEmpty()) {
+                                  exclude.add(s.trim().toLowerCase(Locale.ROOT));
+                              }
+                          }
+                      }
+                      String tz = conf.getString("timezone", "");
+                      if (tz != null && !tz.trim().isEmpty()) {
+                          try {
+                              cfg.zone = ZoneId.of(tz.trim());
+                          } catch (Throwable ignored) {
+                          }
+                      }
+                  } catch (Throwable t) {
+                      dbg(t);
+                  }
+
+                  store = new Store(new File(getDataFolder(), "stats.json"));
+                  store.setGapMs(mergeSec * 1000L);
+                  try {
+                      store.load();
+                  } catch (Throwable t) {
+                      dbg(t);
+                  }
+
+                  pool = Executors.newSingleThreadExecutor(r -> {
+                      Thread th = new Thread(r, "StatsMenu-worker");
+                      th.setDaemon(true);
+                      return th;
+                  });
+
+                  getServer().getPluginManager().registerEvents(this, this);
+
+                  try {
+                      for (Player p : getServer().getOnlinePlayers().values()) {
+                          track(p);
+                      }
+                  } catch (Throwable t) {
+                      dbg(t);
+                  }
+
+                  int ticks = saveSec * 20;
+                  getServer().getScheduler().scheduleDelayedRepeatingTask(this, () -> {
+                      try {
+                          store.heartbeat();
+                          pool.execute(() -> store.save());
+                      } catch (Throwable t) {
+                          dbg(t);
+                      }
+                  }, ticks, ticks);
+              }
+
+              @Override
+              public void onDisable() {
+                  try {
+                      if (store != null) {
+                          store.closeAll();
+                      }
+                  } catch (Throwable t) {
+                      dbg(t);
+                  }
+                  try {
+                      if (pool != null) {
+                          pool.shutdown();
+                          pool.awaitTermination(5, TimeUnit.SECONDS);
+                      }
+                  } catch (Throwable t) {
+                      dbg(t);
+                  }
+                  try {
+                      if (store != null) {
+                          store.save();
+                      }
+                  } catch (Throwable t) {
+                      dbg(t);
+                  }
+              }
+
+              // ---------- учёт сессий ----------
+
+              private static String xuid(Player p) {
+                  try {
+                      String x = p.getLoginChainData().getXUID();
+                      return x == null ? "" : x;
+                  } catch (Throwable t) {
+                      return "";
+                  }
+              }
+
+              private void track(Player p) {
+                  try {
+                      String n = p.getName();
+                      if (n == null || n.isEmpty() || exclude.contains(n.toLowerCase(Locale.ROOT))) {
+                          return;
+                      }
+                      store.join(n, xuid(p));
+                  } catch (Throwable t) {
+                      dbg(t);
+                  }
+              }
+
+              @EventHandler
+              public void onJoin(PlayerJoinEvent e) {
+                  track(e.getPlayer());
+              }
+
+              @EventHandler
+              public void onQuit(PlayerQuitEvent e) {
+                  try {
+                      Player p = e.getPlayer();
+                      ui.remove(p.getUniqueId());
+                      String n = p.getName();
+                      if (n != null) {
+                          store.quit(n);
+                      }
+                  } catch (Throwable t) {
+                      dbg(t);
+                  }
+              }
+
+              // ---------- команда ----------
+
+              @Override
+              public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+                  if (!command.getName().equalsIgnoreCase("ss")) {
+                      return false;
+                  }
+                  if (!(sender instanceof Player)) {
+                      sender.sendMessage("§lКоманда /ss доступна только в игре.");
+                      return true;
+                  }
+                  if (!sender.hasPermission("ss.use")) {
+                      sender.sendMessage("§l§cУ вас нет доступа к этой команде.");
+                      return true;
+                  }
+                  menu((Player) sender);
+                  return true;
+              }
+
+              // ---------- формы ----------
+
+              private void show(Player p, Screen s) {
+                  if (p == null || !p.isOnline()) {
+                      return;
+                  }
+                  FormWindowSimple w = new FormWindowSimple(s.title, s.content);
+                  for (String label : s.labels) {
+                      w.addButton(new ElementButton(label));
+                  }
+                  int id = p.showFormWindow(w);
+                  ui.put(p.getUniqueId(), new Ui(id, s.acts));
+              }
+
+              private void go(Player p, Function<Calc.Ctx, Screen> f) {
+                  try {
+                      pool.execute(() -> {
+                          try {
+                              Screen s = store.read(f, cfg);
+                              getServer().getScheduler().scheduleTask(this, () -> {
+                                  try {
+                                      show(p, s);
+                                  } catch (Throwable t) {
+                                      dbg(t);
+                                  }
+                              });
+                          } catch (Throwable t) {
+                              dbg(t);
+                          }
+                      });
+                  } catch (Throwable t) {
+                      dbg(t);
+                  }
+              }
+
+              @EventHandler
+              public void onForm(PlayerFormRespondedEvent e) {
+                  try {
+                      Player p = e.getPlayer();
+                      Ui u = ui.get(p.getUniqueId());
+                      if (u == null || u.formId != e.getFormID()) {
+                          return;
+                      }
+                      ui.remove(p.getUniqueId());
+                      if (e.wasClosed() || !(e.getResponse() instanceof FormResponseSimple)) {
+                          return;
+                      }
+                      int idx = ((FormResponseSimple) e.getResponse()).getClickedButtonId();
+                      if (idx < 0 || idx >= u.acts.size()) {
+                          return;
+                      }
+                      final Runnable act = u.acts.get(idx);
+                      getServer().getScheduler().scheduleDelayedTask(this, () -> {
+                          try {
+                              act.run();
+                          } catch (Throwable t) {
+                              dbg(t);
+                          }
+                      }, 1);
+                  } catch (Throwable t) {
+                      dbg(t);
+                  }
+              }
+
+              private void menu(Player p) {
+                  go(p, c -> {
+                      Screen s = new Screen();
+                      s.title = "§lСтатистика сервера";
+                      s.content = "§lИгроков в базе:§r " + c.recs.size()
+                              + "\n§lСейчас онлайн:§r " + c.online.size()
+                              + "\n§lДанные ведутся с:§r " + Fmt.date(c.startedAt, c.cfg.zone)
+                              + "\n\nВыберите показатель:";
+                      for (int m = 1; m <= 12; m++) {
+                          final int mm = m;
+                          s.btn(m + ". " + Calc.title(m, c.cfg), () -> metric(p, mm));
+                      }
+                      return s;
+                  });
+              }
+
+              private void metric(Player p, int m) {
+                  go(p, c -> {
+                      Screen s = new Screen();
+                      s.title = "§l" + Calc.title(m, c.cfg);
+                      s.content = Calc.text(m, c);
+                      for (int per : Calc.periods(m)) {
+                          final int pp = per;
+                          s.btn(Calc.listBtn(pp), () -> list(p, m, pp, 0));
+                      }
+                      s.btn("Назад", () -> menu(p));
+                      return s;
+                  });
+              }
+
+              private void list(Player p, int m, int per, int page) {
+                  go(p, c -> {
+                      List<Calc.Row> rows = Calc.rows(m, per, c);
+                      int size = pageSize;
+                      int pages = Math.max(1, (rows.size() + size - 1) / size);
+                      final int pg = Math.min(Math.max(page, 0), pages - 1);
+
+                      Screen s = new Screen();
+                      s.title = "§l" + Calc.title(m, c.cfg) + (per >= 0 ? " (" + Calc.pname(per) + ")" : "");
+                      if (rows.isEmpty()) {
+                          s.content = "Список пуст.";
+                      } else {
+                          s.content = "§lВсего игроков:§r " + rows.size()
+                                  + "\n§lСтраница:§r " + (pg + 1) + " из " + pages
+                                  + "\nНажмите на ник, чтобы открыть карточку игрока.";
+                      }
+                      int from = pg * size;
+                      int to = Math.min(rows.size(), from + size);
+                      for (int i = from; i < to; i++) {
+                          Calc.Row r = rows.get(i);
+                          final int id = r.id;
+                          s.btn(r.name + "\n§l§0" + r.line, () -> card(p, id, m, per, pg));
+                      }
+                      if (pg > 0) {
+                          s.btn("Предыдущая страница", () -> list(p, m, per, pg - 1));
+                      }
+                      if (pg < pages - 1) {
+                          s.btn("Следующая страница", () -> list(p, m, per, pg + 1));
+                      }
+                      s.btn("К показателю", () -> metric(p, m));
+                      s.btn("Главное меню", () -> menu(p));
+                      return s;
+                  });
+              }
+
+              private void card(Player p, int id, int m, int per, int pg) {
+                  go(p, c -> {
+                      Store.Rec found = null;
+                      for (Store.Rec x : c.recs) {
+                          if (x.id == id) {
+                              found = x;
+                              break;
+                          }
+                      }
+                      Screen s = new Screen();
+                      if (found == null) {
+                          s.title = "§lИгрок";
+                          s.content = "Игрок не найден.";
+                      } else {
+                          s.title = "§l" + found.name;
+                          s.content = Calc.card(found, c);
+                      }
+                      s.btn("Назад к списку", () -> list(p, m, per, pg));
+                      s.btn("Главное меню", () -> menu(p));
+                      return s;
+                  });
+              }
+          }
+          EOF_MAIN
+
+      - name: Build plugin
+        working-directory: statsmenu
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MVN_OPTS="-B -ntp -U -Daether.connector.connectTimeout=15000 -Daether.connector.requestTimeout=60000"
+          ok=0
+
+          try_build() {
+            echo "=== Пробую $1:$2:$3 (лимит $4 сек) ==="
+            timeout "$4" mvn $MVN_OPTS clean package -Dnukkit.group="$1" -Dnukkit.artifact="$2" -Dnukkit.version="$3"
+          }
+
+          # Вариант 1: Nukkit-MOT из репозитория Lanink (если он тормозит, через 4 минуты идём дальше)
+          if try_build cn.nukkit Nukkit MOT-SNAPSHOT 240; then ok=1; fi
+
+          # Вариант 2: jar Nukkit-MOT из GitHub Releases
+          if [ "$ok" = "0" ]; then
+            echo "=== Вариант 2: jar Nukkit-MOT из GitHub Releases ==="
+            URL=$(curl -s --max-time 60 -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/MemoriesOfTime/Nukkit-MOT/releases/latest | grep browser_download_url | grep '\.jar' | grep -vi sources | head -n 1 | cut -d '"' -f 4 || true)
+            echo "URL: $URL"
+            if [ -n "$URL" ]; then
+              if curl -sL --max-time 180 -o nukkit-local.jar "$URL" && \
+                 timeout 240 mvn $MVN_OPTS install:install-file -Dfile=nukkit-local.jar -DgroupId=cn.nukkit -DartifactId=nukkit-local -Dversion=local -Dpackaging=jar -DgeneratePom=true && \
+                 try_build cn.nukkit nukkit-local local 240; then
+                ok=1
+              fi
+            fi
+          fi
+
+          # Вариант 3: JitPack (собирает Nukkit-MOT из GitHub, может занять несколько минут)
+          if [ "$ok" = "0" ]; then
+            if try_build com.github.MemoriesOfTime Nukkit-MOT master-SNAPSHOT 600; then ok=1; fi
+          fi
+
+          # Вариант 4: обычный Nukkit из репозитория OpenCollab
+          if [ "$ok" = "0" ]; then
+            if try_build cn.nukkit nukkit 1.0-SNAPSHOT 240; then ok=1; fi
+          fi
+
+          if [ "$ok" = "0" ]; then
+            echo "Не удалось получить Nukkit API ни одним способом"
+            exit 1
+          fi
+          ls -la target/*.jar
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: StatsMenu
+          path: statsmenu/target/StatsMenu.jar
+          if-no-files-found: error
